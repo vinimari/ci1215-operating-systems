@@ -6,6 +6,10 @@
 #include "queue.h"
 
 #define STACKSIZE 64 * 1024 // 64KB por tarefa
+#define DEFAULT_PRIO 0      // Prioridade padrão
+#define ALPHA -1            // Fator de envelhecimento
+#define MIN_PRIO -20        // Prioridade máxima
+#define MAX_PRIO 20         // Prioridade mínima
 
 // Variáveis globais do sistema
 static task_t *current_task = NULL; // Tarefa atual
@@ -15,14 +19,78 @@ static int task_counter = 0;        // Contador de IDs
 static queue_t *ready_queue = NULL; // Fila de tarefas prontas
 static int user_tasks_count = 0;    // Contador de tarefas de usuário
 
-// Escalonador FCFS - seleciona a primeira tarefa da fila de prontas
+// Define a prioridade estática de uma tarefa (ou da atual, se task==NULL)
+void task_setprio(task_t *task, int prio)
+{
+  // Garante que a prioridade esteja no intervalo correto
+  if (prio < MIN_PRIO)
+    prio = MIN_PRIO;
+  else if (prio > MAX_PRIO)
+    prio = MAX_PRIO;
+
+  // Se a tarefa não foi especificada, use a tarefa atual
+  if (task == NULL)
+    task = current_task;
+
+  // Define a prioridade estática e reinicia a dinâmica
+  task->static_prio = prio;
+  task->dynamic_prio = prio;
+}
+
+// Retorna a prioridade estática de uma tarefa (ou da atual, se task==NULL)
+int task_getprio(task_t *task)
+{
+  // Se a tarefa não foi especificada, use a tarefa atual
+  if (task == NULL)
+    task = current_task;
+
+  return task->static_prio;
+}
+
+// Escalonador - seleciona a tarefa de maior prioridade (menor valor) da fila
 task_t *scheduler()
 {
   if (ready_queue == NULL)
     return NULL;
 
-  // Retorna a primeira tarefa da fila (FCFS)
-  return (task_t *)ready_queue;
+  // Localiza a tarefa com maior prioridade (menor valor numérico)
+  task_t *highest_prio_task = NULL;
+  task_t *current = (task_t *)ready_queue;
+  task_t *first = current;
+  int highest_prio = MAX_PRIO + 1; // Inicializa com um valor maior que qualquer prioridade possível
+
+  // Percorre a fila em busca da tarefa com maior prioridade (menor valor numérico)
+  do
+  {
+    // Se a prioridade dinâmica desta tarefa for maior (valor menor)
+    if (current->dynamic_prio < highest_prio)
+    {
+      highest_prio = current->dynamic_prio;
+      highest_prio_task = current;
+    }
+    current = current->next;
+  } while (current != first);
+
+  // Envelhece todas as tarefas que não foram escolhidas
+  current = first;
+  do
+  {
+    if (current != highest_prio_task)
+    {
+      // Aplica o envelhecimento (aumenta a prioridade - diminui o valor)
+      current->dynamic_prio += ALPHA;
+
+      // Garante que não ultrapasse a prioridade máxima
+      if (current->dynamic_prio < MIN_PRIO)
+        current->dynamic_prio = MIN_PRIO;
+    }
+    current = current->next;
+  } while (current != first);
+
+  // Reseta a prioridade dinâmica da tarefa escolhida para seu valor estático
+  highest_prio_task->dynamic_prio = highest_prio_task->static_prio;
+
+  return highest_prio_task;
 }
 
 // Corpo do dispatcher
@@ -80,6 +148,8 @@ void ppos_init()
   main_task.prev = main_task.next = NULL;
   main_task.stack = NULL;
   main_task.exit_code = 0;
+  main_task.static_prio = DEFAULT_PRIO;
+  main_task.dynamic_prio = DEFAULT_PRIO;
 
   if (getcontext(&main_task.context) == -1)
   {
@@ -137,6 +207,8 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->status = TASK_READY;
   task->prev = task->next = NULL;
   task->exit_code = 0;
+  task->static_prio = DEFAULT_PRIO;
+  task->dynamic_prio = DEFAULT_PRIO;
 
   // Adiciona à fila de prontos
   queue_append((queue_t **)&ready_queue, (queue_t *)task);

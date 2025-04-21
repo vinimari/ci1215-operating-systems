@@ -18,6 +18,8 @@ typedef struct task_t
   short status;               // Estado atual
   void *stack;                // Pilha da tarefa
   int exit_code;              // Código de saída
+  int static_prio;            // Prioridade estática (-20 a +20)
+  int dynamic_prio;           // Prioridade dinâmica (para envelhecimento)
 } task_t;
 
 // Estruturas para sincronização (vazias por enquanto)
