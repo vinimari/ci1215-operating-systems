@@ -15,49 +15,57 @@ static int task_counter = 0;        // Contador de IDs
 static queue_t *ready_queue = NULL; // Fila de tarefas prontas
 static int user_tasks_count = 0;    // Contador de tarefas de usuário
 
-// Escalonador FCFS
+// Escalonador FCFS - seleciona a primeira tarefa da fila de prontas
 task_t *scheduler()
 {
-  return (ready_queue != NULL) ? (task_t *)ready_queue : NULL;
+  if (ready_queue == NULL)
+    return NULL;
+
+  // Retorna a primeira tarefa da fila (FCFS)
+  return (task_t *)ready_queue;
 }
 
 // Corpo do dispatcher
 void dispatcher_body(void *arg)
 {
-  (void)arg;
+  task_t *next;
 
-  // Remove a si mesmo da fila de prontos
-  queue_remove(&ready_queue, (queue_t *)&dispatcher_task);
-
+  // Enquanto houverem tarefas de usuário
   while (user_tasks_count > 0)
   {
-    task_t *next = scheduler();
+    // Escolhe a próxima tarefa a executar
+    next = scheduler();
 
     if (next != NULL)
     {
-      printf("Dispatcher: switching to task %d\n", next->id); // Debug
+      // Remove da fila de prontas
+      queue_remove(&ready_queue, (queue_t *)next);
+
+      // Transfere controle para a próxima tarefa
       task_switch(next);
 
-      // Trata estado da tarefa após retorno
-      switch (next->status)
+      // Voltando ao dispatcher, trata a tarefa de acordo com seu estado
+      if (next->status == TASK_TERMINATED)
       {
-      case TASK_TERMINATED:
-        queue_remove(&ready_queue, (queue_t *)next);
+        // Decrementa o contador de tarefas de usuário
         user_tasks_count--;
-        free(next->stack);
-        break;
 
-      case TASK_SUSPENDED:
-        queue_remove(&ready_queue, (queue_t *)next);
-        break;
-
-      default:
-        break;
+        // Libera a pilha alocada para a tarefa
+        if (next->stack)
+        {
+          free(next->stack);
+          next->stack = NULL;
+        }
+      }
+      else if (next->status == TASK_READY)
+      {
+        // Reinsere na fila de prontas se não terminou
+        queue_append(&ready_queue, (queue_t *)next);
       }
     }
   }
 
-  // Todas tarefas finalizadas - volta para main
+  // Encerra a tarefa dispatcher retornando à main
   task_switch(&main_task);
 }
 
@@ -79,20 +87,18 @@ void ppos_init()
     exit(1);
   }
 
-  ready_queue = NULL;
-  user_tasks_count = 0;
-
-  // Cria o dispatcher
-  if (task_init(&dispatcher_task, dispatcher_body, NULL) < 0)
-  {
-    fprintf(stderr, "Failed to create dispatcher task\n");
-    exit(1);
-  }
-
+  // Define a tarefa atual como a main
   current_task = &main_task;
 
-  // Imediatamente transfere controle para o dispatcher
-  task_switch(&dispatcher_task);
+  // Inicializa o contador de tarefas de usuário
+  user_tasks_count = 0;
+
+  // Cria a tarefa dispatcher
+  task_init(&dispatcher_task, dispatcher_body, NULL);
+
+  // A tarefa dispatcher não deve ser contada como tarefa de usuário
+  queue_remove(&ready_queue, (queue_t *)&dispatcher_task);
+  user_tasks_count--;
 }
 
 // Cria uma nova tarefa
@@ -121,7 +127,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->context.uc_stack.ss_sp = task->stack;
   task->context.uc_stack.ss_size = STACKSIZE;
   task->context.uc_stack.ss_flags = 0;
-  task->context.uc_link = 0;
+  task->context.uc_link = 0; // Quando terminar, encerra (não volta para lugar nenhum)
 
   // Cria o contexto com a função de entrada
   makecontext(&task->context, (void (*)(void))start_routine, 1, arg);
@@ -135,7 +141,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   // Adiciona à fila de prontos
   queue_append((queue_t **)&ready_queue, (queue_t *)task);
   user_tasks_count++;
-  printf("Task %d created successfully\n", task->id); // Debug
+
   return task->id;
 }
 
@@ -148,7 +154,7 @@ int task_switch(task_t *task)
   task_t *old = current_task;
   current_task = task;
 
-  old->status = TASK_READY;
+  // Atualiza o estado da tarefa para executando
   task->status = TASK_RUNNING;
 
   if (swapcontext(&old->context, &task->context) == -1)
@@ -163,21 +169,24 @@ int task_switch(task_t *task)
 // Finaliza a tarefa atual
 void task_exit(int exit_code)
 {
+  current_task->exit_code = exit_code;
+
   if (current_task == &main_task)
   {
-    // Main task tentando sair - transfere para dispatcher primeiro
-    current_task->status = TASK_TERMINATED;
-    current_task->exit_code = exit_code;
-    task_switch(&dispatcher_task);
-
-    // Se o dispatcher retornar, então finaliza o programa
+    // Se main está saindo e ainda há tarefas de usuário, vai para o dispatcher
+    if (user_tasks_count > 0)
+    {
+      task_switch(&dispatcher_task);
+    }
+    // Se não houver mais tarefas, termina o programa
     exit(exit_code);
   }
   else
   {
-    // Outras tarefas voltam para o dispatcher
+    // Marca como terminada
     current_task->status = TASK_TERMINATED;
-    current_task->exit_code = exit_code;
+
+    // Volta para o dispatcher
     task_switch(&dispatcher_task);
   }
 }
@@ -185,15 +194,7 @@ void task_exit(int exit_code)
 // Libera a CPU voluntariamente
 void task_yield()
 {
-  if (current_task == &main_task || current_task == &dispatcher_task)
-  {
-    return;
-  }
-
-  // Reinsere no final da fila
-  queue_remove((queue_t **)&ready_queue, (queue_t *)current_task);
-  queue_append((queue_t **)&ready_queue, (queue_t *)current_task);
-
+  // Marca tarefa como pronta e devolve o controle ao dispatcher
   current_task->status = TASK_READY;
   task_switch(&dispatcher_task);
 }
