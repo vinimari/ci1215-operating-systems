@@ -362,7 +362,7 @@ void task_exit(int exit_code)
   }
 }
 
-// Libera a CPU voluntariamente
+// Libera a CPU
 void task_yield()
 {
   // Marca tarefa como pronta e devolve o controle ao dispatcher
