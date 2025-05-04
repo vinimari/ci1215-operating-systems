@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ucontext.h>
+#include <signal.h>
+#include <sys/time.h>
 #include "ppos.h"
 #include "ppos_data.h"
 #include "queue.h"
@@ -10,14 +12,62 @@
 #define ALPHA -1            // Fator de envelhecimento
 #define MIN_PRIO -20        // Prioridade máxima
 #define MAX_PRIO 20         // Prioridade mínima
+#define QUANTUM 20          // Quantum padrão (em ticks)
+#define TICK_INTERVAL 1000  // Intervalo do temporizador (em microssegundos)
+
+// Descomentar para depuração do preemptor
+// #define DEBUG
 
 // Variáveis globais do sistema
-static task_t *current_task = NULL; // Tarefa atual
-static task_t main_task;            // Tarefa principal
-static task_t dispatcher_task;      // Tarefa dispatcher
-static int task_counter = 0;        // Contador de IDs
-static queue_t *ready_queue = NULL; // Fila de tarefas prontas
-static int user_tasks_count = 0;    // Contador de tarefas de usuário
+static task_t *current_task = NULL;   // Tarefa atual
+static task_t main_task;              // Tarefa principal
+static task_t dispatcher_task;        // Tarefa dispatcher
+static int task_counter = 0;          // Contador de IDs
+static queue_t *ready_queue = NULL;   // Fila de tarefas prontas
+static int user_tasks_count = 0;      // Contador de tarefas de usuário
+static unsigned int system_clock = 0; // Relógio do sistema
+
+// Estrutura para o tratador de sinal
+struct sigaction action;
+
+// Estrutura para o temporizador
+struct itimerval timer;
+
+// Variável para controlar o quantum da tarefa atual
+static int task_quantum;
+
+// Tratador de sinal para preempção
+void timer_handler(int signum)
+{
+  // Incrementa o relógio do sistema
+  system_clock++;
+
+  // Se a tarefa atual for uma tarefa de usuário
+  if (current_task && current_task->task_type == USER_TASK)
+  {
+    // Decrementa o quantum da tarefa
+    task_quantum--;
+
+#ifdef DEBUG
+    printf("TICK: tarefa %d, quantum %d\n", current_task->id, task_quantum);
+#endif
+
+    // Se o quantum chegou a zero, preempta a tarefa
+    if (task_quantum == 0)
+    {
+      // Marca tarefa como pronta e devolve o controle ao dispatcher
+      if (current_task->status == TASK_RUNNING)
+      {
+#ifdef DEBUG
+        printf("PREEMPCAO: tarefa %d\n", current_task->id);
+#endif
+
+        current_task->status = TASK_READY;
+        task_yield();
+      }
+    }
+  }
+}
 
 // Define a prioridade estática de uma tarefa (ou da atual, se task==NULL)
 void task_setprio(task_t *task, int prio)
@@ -109,6 +159,9 @@ void dispatcher_body(void *arg)
       // Remove da fila de prontas
       queue_remove(&ready_queue, (queue_t *)next);
 
+      // Reseta o quantum para a próxima tarefa
+      task_quantum = QUANTUM;
+
       // Transfere controle para a próxima tarefa
       task_switch(next);
 
@@ -137,6 +190,39 @@ void dispatcher_body(void *arg)
   task_switch(&main_task);
 }
 
+// Inicializa o sistema de tempo
+void timer_init()
+{
+  // Registra o tratador de sinal para SIGALRM
+  action.sa_handler = timer_handler;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+  if (sigaction(SIGALRM, &action, 0) < 0)
+  {
+    perror("Erro em sigaction: ");
+    exit(1);
+  }
+
+  // Configura o temporizador para disparar a cada 1ms
+  timer.it_value.tv_usec = TICK_INTERVAL;    // primeiro disparo, em microssegundos
+  timer.it_value.tv_sec = 0;                 // primeiro disparo, em segundos
+  timer.it_interval.tv_usec = TICK_INTERVAL; // disparos subsequentes, em microssegundos
+  timer.it_interval.tv_sec = 0;              // disparos subsequentes, em segundos
+
+  // Ativa o temporizador
+  if (setitimer(ITIMER_REAL, &timer, 0) < 0)
+  {
+    perror("Erro em setitimer: ");
+    exit(1);
+  }
+}
+
+// Retorna o relógio atual (em milisegundos)
+unsigned int systime()
+{
+  return system_clock;
+}
+
 // Inicializa o sistema
 void ppos_init()
 {
@@ -150,6 +236,7 @@ void ppos_init()
   main_task.exit_code = 0;
   main_task.static_prio = DEFAULT_PRIO;
   main_task.dynamic_prio = DEFAULT_PRIO;
+  main_task.task_type = USER_TASK; // Main é uma tarefa de usuário
 
   if (getcontext(&main_task.context) == -1)
   {
@@ -163,12 +250,24 @@ void ppos_init()
   // Inicializa o contador de tarefas de usuário
   user_tasks_count = 0;
 
-  // Cria a tarefa dispatcher
+  // Inicializa o relógio do sistema
+  system_clock = 0;
+
+  // Define o quantum inicial
+  task_quantum = QUANTUM;
+
+  // Cria a tarefa dispatcher como tarefa de sistema
   task_init(&dispatcher_task, dispatcher_body, NULL);
+
+  // Define o dispatcher como tarefa de sistema
+  dispatcher_task.task_type = SYSTEM_TASK;
 
   // A tarefa dispatcher não deve ser contada como tarefa de usuário
   queue_remove(&ready_queue, (queue_t *)&dispatcher_task);
   user_tasks_count--;
+
+  // Inicializa o sistema de tempo (preempção)
+  timer_init();
 }
 
 // Cria uma nova tarefa
@@ -209,6 +308,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->exit_code = 0;
   task->static_prio = DEFAULT_PRIO;
   task->dynamic_prio = DEFAULT_PRIO;
+  task->task_type = USER_TASK; // Por padrão, cria como tarefa de usuário
 
   // Adiciona à fila de prontos
   queue_append((queue_t **)&ready_queue, (queue_t *)task);
