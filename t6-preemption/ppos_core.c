@@ -295,7 +295,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->context.uc_stack.ss_sp = task->stack;
   task->context.uc_stack.ss_size = STACKSIZE;
   task->context.uc_stack.ss_flags = 0;
-  task->context.uc_link = 0; // Quando terminar, encerra (não volta para lugar nenhum)
+  task->context.uc_link = &dispatcher_task.context; // Quando terminar, volta para o dispatcher
 
   // Cria o contexto com a função de entrada
   makecontext(&task->context, (void (*)(void))start_routine, 1, arg);
