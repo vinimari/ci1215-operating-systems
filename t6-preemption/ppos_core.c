@@ -62,7 +62,6 @@ void timer_handler(int signum)
         printf("PREEMPCAO: tarefa %d\n", current_task->id);
 #endif
 
-        current_task->status = TASK_READY;
         task_yield();
       }
     }
