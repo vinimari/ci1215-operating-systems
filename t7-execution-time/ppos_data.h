@@ -25,6 +25,13 @@ typedef struct task_t
   int static_prio;            // Prioridade estática (-20 a +20)
   int dynamic_prio;           // Prioridade dinâmica (para envelhecimento)
   int task_type;              // Tipo da tarefa (SYSTEM_TASK ou USER_TASK)
+
+  // Campos para contabilização de uso
+  unsigned int execution_time;  // Tempo total de execução (em ms)
+  unsigned int processor_time;  // Tempo de processador (em ms)
+  unsigned int activations;     // Número de ativações
+  unsigned int start_time;      // Momento de início da tarefa
+  unsigned int last_activation; // Momento da última ativação
 } task_t;
 
 // Estruturas para sincronização (vazias por enquanto)

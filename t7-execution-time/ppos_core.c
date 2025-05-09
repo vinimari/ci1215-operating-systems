@@ -45,6 +45,9 @@ void timer_handler(int signum)
   // Se a tarefa atual for uma tarefa de usuário
   if (current_task && current_task->task_type == USER_TASK)
   {
+    // Incrementa o tempo de processador da tarefa atual
+    current_task->processor_time++;
+
     // Decrementa o quantum da tarefa
     task_quantum--;
 
@@ -61,7 +64,6 @@ void timer_handler(int signum)
 #ifdef DEBUG
         printf("PREEMPCAO: tarefa %d\n", current_task->id);
 #endif
-
         task_yield();
       }
     }
@@ -147,6 +149,9 @@ void dispatcher_body(void *arg)
 {
   task_t *next;
 
+  // Salva o momento de início do dispatcher
+  dispatcher_task.start_time = systime();
+
   // Enquanto houverem tarefas de usuário
   while (user_tasks_count > 0)
   {
@@ -157,6 +162,12 @@ void dispatcher_body(void *arg)
     {
       // Remove da fila de prontas
       queue_remove(&ready_queue, (queue_t *)next);
+
+      // Incrementa o contador de ativações
+      next->activations++;
+
+      // Salva o tempo da última ativação
+      next->last_activation = systime();
 
       // Reseta o quantum para a próxima tarefa
       task_quantum = QUANTUM;
@@ -184,6 +195,14 @@ void dispatcher_body(void *arg)
       }
     }
   }
+
+  // Calcula o tempo de execução do dispatcher
+  dispatcher_task.execution_time = systime() - dispatcher_task.start_time;
+
+  // Imprime as estatísticas do dispatcher antes de encerrar
+  printf("Task %d exit: execution time %6d ms, processor time %6d ms, %d activations\n",
+         dispatcher_task.id, dispatcher_task.execution_time, dispatcher_task.processor_time,
+         dispatcher_task.activations);
 
   // Encerra a tarefa dispatcher retornando à main
   task_switch(&main_task);
@@ -237,6 +256,13 @@ void ppos_init()
   main_task.dynamic_prio = DEFAULT_PRIO;
   main_task.task_type = USER_TASK; // Main é uma tarefa de usuário
 
+  // Inicializa os contadores de tempo
+  main_task.execution_time = 0;
+  main_task.processor_time = 0;
+  main_task.activations = 0;
+  main_task.start_time = 0;
+  main_task.last_activation = 0;
+
   if (getcontext(&main_task.context) == -1)
   {
     perror("ppos_init: getcontext error");
@@ -267,6 +293,11 @@ void ppos_init()
 
   // Inicializa o sistema de tempo (preempção)
   timer_init();
+
+  // Registra o início da execução da main
+  main_task.start_time = systime();
+  main_task.last_activation = systime();
+  main_task.activations = 1;
 }
 
 // Cria uma nova tarefa
@@ -309,6 +340,13 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->dynamic_prio = DEFAULT_PRIO;
   task->task_type = USER_TASK; // Por padrão, cria como tarefa de usuário
 
+  // Inicializa os contadores de tempo
+  task->execution_time = 0;
+  task->processor_time = 0;
+  task->activations = 0;
+  task->start_time = systime();
+  task->last_activation = 0;
+
   // Adiciona à fila de prontos
   queue_append((queue_t **)&ready_queue, (queue_t *)task);
   user_tasks_count++;
@@ -341,6 +379,14 @@ int task_switch(task_t *task)
 void task_exit(int exit_code)
 {
   current_task->exit_code = exit_code;
+
+  // Calcula o tempo total de execução da tarefa
+  current_task->execution_time = systime() - current_task->start_time;
+
+  // Imprime as estatísticas da tarefa
+  printf("Task %d exit: execution time %6d ms, processor time %6d ms, %d activations\n",
+         current_task->id, current_task->execution_time, current_task->processor_time,
+         current_task->activations);
 
   if (current_task == &main_task)
   {

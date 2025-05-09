@@ -3,12 +3,18 @@ CFLAGS = -Wall -g
 
 .PHONY: all clean
 
-all: pingpong-preempcao
+all: test1-same-priority test2-distinct-priority
 
-pingpong-preempcao: pingpong-preempcao.o ppos_core.o queue.o
+test1-same-priority: test1-same-priority.o ppos_core.o queue.o
 	$(CC) -o $@ $^
 
-pingpong-preempcao.o: pingpong-preempcao.c
+test2-distinct-priority: test2-distinct-priority.o ppos_core.o queue.o
+	$(CC) -o $@ $^
+
+test1-same-priority.o: test1-same-priority.c
+	$(CC) $(CFLAGS) -c $<
+
+test2-distinct-priority.o: test2-distinct-priority.c
 	$(CC) $(CFLAGS) -c $<
 
 ppos_core.o: ppos_core.c
@@ -18,4 +24,4 @@ queue.o: queue.c
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f *.o pingpong-preempcao
+	rm -f *.o test1-same-priority test2-distinct-priority
