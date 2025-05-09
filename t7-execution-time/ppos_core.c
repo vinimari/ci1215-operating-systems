@@ -42,29 +42,33 @@ void timer_handler(int signum)
   // Incrementa o relógio do sistema
   system_clock++;
 
-  // Se a tarefa atual for uma tarefa de usuário
-  if (current_task && current_task->task_type == USER_TASK)
+  // Se existe tarefa atual
+  if (current_task)
   {
     // Incrementa o tempo de processador da tarefa atual
+    // Não diferencia entre tarefas de usuário e sistema
     current_task->processor_time++;
 
-    // Decrementa o quantum da tarefa
-    task_quantum--;
-
-#ifdef DEBUG
-    printf("TICK: tarefa %d, quantum %d\n", current_task->id, task_quantum);
-#endif
-
-    // Se o quantum chegou a zero, preempta a tarefa
-    if (task_quantum == 0)
+    // Decrementa o quantum apenas para tarefas de usuário
+    if (current_task->task_type == USER_TASK)
     {
-      // Marca tarefa como pronta e devolve o controle ao dispatcher
-      if (current_task->status == TASK_RUNNING)
-      {
+      task_quantum--;
+
 #ifdef DEBUG
-        printf("PREEMPCAO: tarefa %d\n", current_task->id);
+      printf("TICK: tarefa %d, quantum %d\n", current_task->id, task_quantum);
 #endif
-        task_yield();
+
+      // Se o quantum chegou a zero, preempta a tarefa
+      if (task_quantum == 0)
+      {
+        // Marca tarefa como pronta e devolve o controle ao dispatcher
+        if (current_task->status == TASK_RUNNING)
+        {
+#ifdef DEBUG
+          printf("PREEMPCAO: tarefa %d\n", current_task->id);
+#endif
+          task_yield();
+        }
       }
     }
   }
@@ -162,12 +166,6 @@ void dispatcher_body(void *arg)
     {
       // Remove da fila de prontas
       queue_remove(&ready_queue, (queue_t *)next);
-
-      // Incrementa o contador de ativações
-      next->activations++;
-
-      // Salva o tempo da última ativação
-      next->last_activation = systime();
 
       // Reseta o quantum para a próxima tarefa
       task_quantum = QUANTUM;
@@ -365,6 +363,12 @@ int task_switch(task_t *task)
 
   // Atualiza o estado da tarefa para executando
   task->status = TASK_RUNNING;
+
+  // Incrementa o contador de ativações
+  task->activations++;
+
+  // Salva o tempo da última ativação
+  task->last_activation = systime();
 
   if (swapcontext(&old->context, &task->context) == -1)
   {
