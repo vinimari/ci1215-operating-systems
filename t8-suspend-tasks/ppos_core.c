@@ -191,6 +191,7 @@ void dispatcher_body(void *arg)
         // Reinsere na fila de prontas se não terminou
         queue_append(&ready_queue, (queue_t *)next);
       }
+      // Se status == TASK_SUSPENDED, não faz nada (fica suspensa)
     }
   }
 
@@ -253,6 +254,7 @@ void ppos_init()
   main_task.static_prio = DEFAULT_PRIO;
   main_task.dynamic_prio = DEFAULT_PRIO;
   main_task.task_type = USER_TASK; // Main é uma tarefa de usuário
+  main_task.waiting_queue = NULL;  // Inicializa a fila de espera
 
   // Inicializa os contadores de tempo
   main_task.execution_time = 0;
@@ -337,6 +339,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->static_prio = DEFAULT_PRIO;
   task->dynamic_prio = DEFAULT_PRIO;
   task->task_type = USER_TASK; // Por padrão, cria como tarefa de usuário
+  task->waiting_queue = NULL;  // Inicializa a fila de espera
 
   // Inicializa os contadores de tempo
   task->execution_time = 0;
@@ -387,6 +390,13 @@ void task_exit(int exit_code)
   // Calcula o tempo total de execução da tarefa
   current_task->execution_time = systime() - current_task->start_time;
 
+  // Acorda todas as tarefas que estavam esperando por esta tarefa
+  while (current_task->waiting_queue != NULL)
+  {
+    task_t *waiting_task = current_task->waiting_queue;
+    task_awake(waiting_task, &(current_task->waiting_queue));
+  }
+
   // Imprime as estatísticas da tarefa
   printf("Task %d exit: execution time %6d ms, processor time %6d ms, %d activations\n",
          current_task->id, current_task->execution_time, current_task->processor_time,
@@ -424,4 +434,96 @@ void task_yield()
 int task_id()
 {
   return current_task ? current_task->id : 0;
+}
+
+// Suspende a tarefa atual
+void task_suspend(task_t **queue)
+{
+  // Desabilita as interrupções para evitar condições de disputa
+  sigset_t mask, oldmask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGALRM);
+  sigprocmask(SIG_BLOCK, &mask, &oldmask);
+
+  // Se a tarefa atual está na fila de prontas, remove dela
+  if (current_task->status == TASK_READY)
+  {
+    queue_remove(&ready_queue, (queue_t *)current_task);
+  }
+
+  // Ajusta o status da tarefa atual para suspensa
+  current_task->status = TASK_SUSPENDED;
+
+  // Se a fila não é nula, insere a tarefa atual nela
+  if (queue != NULL)
+  {
+    queue_append((queue_t **)queue, (queue_t *)current_task);
+  }
+
+  // Reabilita as interrupções
+  sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
+  // Retorna ao dispatcher
+  task_switch(&dispatcher_task);
+}
+
+// Acorda uma tarefa que está suspensa em uma dada fila
+void task_awake(task_t *task, task_t **queue)
+{
+  if (task == NULL)
+    return;
+
+  // Desabilita as interrupções para evitar condições de disputa
+  sigset_t mask, oldmask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGALRM);
+  sigprocmask(SIG_BLOCK, &mask, &oldmask);
+
+  // Se a fila não é nula, retira a tarefa dessa fila
+  if (queue != NULL && *queue != NULL)
+  {
+    queue_remove((queue_t **)queue, (queue_t *)task);
+  }
+
+  // Ajusta o status da tarefa para pronta
+  task->status = TASK_READY;
+
+  // Insere a tarefa na fila de tarefas prontas
+  queue_append(&ready_queue, (queue_t *)task);
+
+  // Reabilita as interrupções
+  sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
+  // Continua a tarefa atual (não retorna ao dispatcher)
+}
+
+// A tarefa corrente aguarda o encerramento de outra task
+int task_wait(task_t *task)
+{
+  // Verifica se a tarefa existe
+  if (task == NULL)
+    return -1;
+
+  // Desabilita as interrupções para evitar condições de disputa
+  sigset_t mask, oldmask;
+  sigemptyset(&mask);
+  sigaddset(&mask, SIGALRM);
+  sigprocmask(SIG_BLOCK, &mask, &oldmask);
+
+  // Se a tarefa já terminou, retorna o código de saída imediatamente
+  if (task->status == TASK_TERMINATED)
+  {
+    int exit_code = task->exit_code;
+    sigprocmask(SIG_SETMASK, &oldmask, NULL);
+    return exit_code;
+  }
+
+  // Suspende a tarefa atual na fila de espera da tarefa especificada
+  task_suspend(&(task->waiting_queue));
+
+  // Reabilita as interrupções
+  sigprocmask(SIG_SETMASK, &oldmask, NULL);
+
+  // Quando a tarefa atual for acordada, retorna o código de saída da tarefa esperada
+  return task->exit_code;
 }

@@ -32,6 +32,9 @@ typedef struct task_t
   unsigned int activations;     // Número de ativações
   unsigned int start_time;      // Momento de início da tarefa
   unsigned int last_activation; // Momento da última ativação
+
+  // Campo para sincronização
+  struct task_t *waiting_queue; // Fila de tarefas esperando por esta tarefa
 } task_t;
 
 // Estruturas para sincronização (vazias por enquanto)
