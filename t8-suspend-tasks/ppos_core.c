@@ -15,9 +15,6 @@
 #define QUANTUM 20          // Quantum padrão (em ticks)
 #define TICK_INTERVAL 1000  // Intervalo do temporizador (em microssegundos)
 
-// Descomentar para depuração do preemptor
-// #define DEBUG
-
 // Variáveis globais do sistema
 static task_t *current_task = NULL;   // Tarefa atual
 static task_t main_task;              // Tarefa principal
@@ -54,19 +51,12 @@ void timer_handler(int signum)
     {
       task_quantum--;
 
-#ifdef DEBUG
-      printf("TICK: tarefa %d, quantum %d\n", current_task->id, task_quantum);
-#endif
-
       // Se o quantum chegou a zero, preempta a tarefa
       if (task_quantum == 0)
       {
         // Marca tarefa como pronta e devolve o controle ao dispatcher
         if (current_task->status == TASK_RUNNING)
         {
-#ifdef DEBUG
-          printf("PREEMPCAO: tarefa %d\n", current_task->id);
-#endif
           task_yield();
         }
       }
@@ -439,12 +429,6 @@ int task_id()
 // Suspende a tarefa atual
 void task_suspend(task_t **queue)
 {
-  // Desabilita as interrupções para evitar condições de disputa
-  sigset_t mask, oldmask;
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGALRM);
-  sigprocmask(SIG_BLOCK, &mask, &oldmask);
-
   // Se a tarefa atual está na fila de prontas, remove dela
   if (current_task->status == TASK_READY)
   {
@@ -460,9 +444,6 @@ void task_suspend(task_t **queue)
     queue_append((queue_t **)queue, (queue_t *)current_task);
   }
 
-  // Reabilita as interrupções
-  sigprocmask(SIG_SETMASK, &oldmask, NULL);
-
   // Retorna ao dispatcher
   task_switch(&dispatcher_task);
 }
@@ -472,12 +453,6 @@ void task_awake(task_t *task, task_t **queue)
 {
   if (task == NULL)
     return;
-
-  // Desabilita as interrupções para evitar condições de disputa
-  sigset_t mask, oldmask;
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGALRM);
-  sigprocmask(SIG_BLOCK, &mask, &oldmask);
 
   // Se a fila não é nula, retira a tarefa dessa fila
   if (queue != NULL && *queue != NULL)
@@ -491,9 +466,6 @@ void task_awake(task_t *task, task_t **queue)
   // Insere a tarefa na fila de tarefas prontas
   queue_append(&ready_queue, (queue_t *)task);
 
-  // Reabilita as interrupções
-  sigprocmask(SIG_SETMASK, &oldmask, NULL);
-
   // Continua a tarefa atual (não retorna ao dispatcher)
 }
 
@@ -504,25 +476,21 @@ int task_wait(task_t *task)
   if (task == NULL)
     return -1;
 
-  // Desabilita as interrupções para evitar condições de disputa
-  sigset_t mask, oldmask;
-  sigemptyset(&mask);
-  sigaddset(&mask, SIGALRM);
-  sigprocmask(SIG_BLOCK, &mask, &oldmask);
-
   // Se a tarefa já terminou, retorna o código de saída imediatamente
   if (task->status == TASK_TERMINATED)
   {
     int exit_code = task->exit_code;
-    sigprocmask(SIG_SETMASK, &oldmask, NULL);
     return exit_code;
   }
 
-  // Suspende a tarefa atual na fila de espera da tarefa especificada
-  task_suspend(&(task->waiting_queue));
+  // Marca a tarefa atual como suspensa
+  current_task->status = TASK_SUSPENDED;
 
-  // Reabilita as interrupções
-  sigprocmask(SIG_SETMASK, &oldmask, NULL);
+  // Adiciona a tarefa atual na fila de espera da tarefa especificada
+  queue_append((queue_t **)&(task->waiting_queue), (queue_t *)current_task);
+
+  // Retorna ao dispatcher
+  task_switch(&dispatcher_task);
 
   // Quando a tarefa atual for acordada, retorna o código de saída da tarefa esperada
   return task->exit_code;
