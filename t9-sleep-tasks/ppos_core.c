@@ -16,14 +16,14 @@
 #define TICK_INTERVAL 1000  // Intervalo do temporizador (em microssegundos)
 
 // Variáveis globais do sistema
-static task_t *current_task = NULL;    // Tarefa atual
-static task_t main_task;               // Tarefa principal
-static task_t dispatcher_task;         // Tarefa dispatcher
-static int task_counter = 0;           // Contador de IDs
-static queue_t *ready_queue = NULL;    // Fila de tarefas prontas
-static queue_t *sleeping_queue = NULL; // Fila de tarefas adormecidas
-static int user_tasks_count = 0;       // Contador de tarefas de usuário
-static unsigned int system_clock = 0;  // Relógio do sistema
+static task_t *current_task = NULL;   // Tarefa atual
+static task_t main_task;              // Tarefa principal
+static task_t dispatcher_task;        // Tarefa dispatcher
+static int task_counter = 0;          // Contador de IDs
+static queue_t *ready_queue = NULL;   // Fila de tarefas prontas
+static task_t *sleeping_queue = NULL; // Fila de tarefas adormecidas
+static int user_tasks_count = 0;      // Contador de tarefas de usuário
+static unsigned int system_clock = 0; // Relógio do sistema
 
 // Estrutura para o tratador de sinal
 struct sigaction action;
