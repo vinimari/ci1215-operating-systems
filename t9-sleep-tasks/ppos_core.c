@@ -16,13 +16,14 @@
 #define TICK_INTERVAL 1000  // Intervalo do temporizador (em microssegundos)
 
 // Variáveis globais do sistema
-static task_t *current_task = NULL;   // Tarefa atual
-static task_t main_task;              // Tarefa principal
-static task_t dispatcher_task;        // Tarefa dispatcher
-static int task_counter = 0;          // Contador de IDs
-static queue_t *ready_queue = NULL;   // Fila de tarefas prontas
-static int user_tasks_count = 0;      // Contador de tarefas de usuário
-static unsigned int system_clock = 0; // Relógio do sistema
+static task_t *current_task = NULL;    // Tarefa atual
+static task_t main_task;               // Tarefa principal
+static task_t dispatcher_task;         // Tarefa dispatcher
+static int task_counter = 0;           // Contador de IDs
+static queue_t *ready_queue = NULL;    // Fila de tarefas prontas
+static queue_t *sleeping_queue = NULL; // Fila de tarefas adormecidas
+static int user_tasks_count = 0;       // Contador de tarefas de usuário
+static unsigned int system_clock = 0;  // Relógio do sistema
 
 // Estrutura para o tratador de sinal
 struct sigaction action;
@@ -138,6 +139,38 @@ task_t *scheduler()
   return highest_prio_task;
 }
 
+// Função para verificar e acordar tarefas adormecidas
+void check_sleeping_tasks()
+{
+  if (sleeping_queue == NULL)
+    return;
+
+  unsigned int current_time = systime();
+  task_t *current = (task_t *)sleeping_queue;
+  task_t *first = current;
+  task_t *next;
+
+  // Percorre a fila de tarefas adormecidas
+  do
+  {
+    next = current->next;
+
+    // Se chegou a hora de acordar esta tarefa
+    if (current_time >= current->wake_time)
+    {
+      // Acorda a tarefa (remove da fila de sleep e coloca na fila de prontas)
+      task_awake(current, &sleeping_queue);
+    }
+
+    current = next;
+
+    // Se a fila ficou vazia, para o loop
+    if (sleeping_queue == NULL)
+      break;
+
+  } while (current != first && sleeping_queue != NULL);
+}
+
 // Corpo do dispatcher
 void dispatcher_body(void *arg)
 {
@@ -146,9 +179,12 @@ void dispatcher_body(void *arg)
   // Salva o momento de início do dispatcher
   dispatcher_task.start_time = systime();
 
-  // Enquanto houverem tarefas de usuário
-  while (user_tasks_count > 0)
+  // Enquanto houverem tarefas de usuário ou tarefas adormecidas
+  while (user_tasks_count > 0 || sleeping_queue != NULL)
   {
+    // Verifica se há tarefas adormecidas que devem acordar
+    check_sleeping_tasks();
+
     // Escolhe a próxima tarefa a executar
     next = scheduler();
 
@@ -230,6 +266,20 @@ unsigned int systime()
   return system_clock;
 }
 
+// Faz com que a tarefa atual fique suspensa durante o intervalo indicado em milissegundos
+void task_sleep(int time_sleep)
+{
+  // Se o tempo é zero ou negativo, não faz nada
+  if (time_sleep <= 0)
+    return;
+
+  // Calcula o momento em que a tarefa deve acordar
+  current_task->wake_time = systime() + time_sleep;
+
+  // Suspende a tarefa atual na fila de tarefas adormecidas
+  task_suspend(&sleeping_queue);
+}
+
 // Inicializa o sistema
 void ppos_init()
 {
@@ -245,6 +295,7 @@ void ppos_init()
   main_task.dynamic_prio = DEFAULT_PRIO;
   main_task.task_type = USER_TASK; // Main é uma tarefa de usuário
   main_task.waiting_queue = NULL;  // Inicializa a fila de espera
+  main_task.wake_time = 0;         // Inicializa o campo wake_time
 
   // Inicializa os contadores de tempo
   main_task.execution_time = 0;
@@ -330,6 +381,7 @@ int task_init(task_t *task, void (*start_routine)(void *), void *arg)
   task->dynamic_prio = DEFAULT_PRIO;
   task->task_type = USER_TASK; // Por padrão, cria como tarefa de usuário
   task->waiting_queue = NULL;  // Inicializa a fila de espera
+  task->wake_time = 0;         // Inicializa o campo wake_time
 
   // Inicializa os contadores de tempo
   task->execution_time = 0;
@@ -388,7 +440,7 @@ void task_exit(int exit_code)
   }
 
   // Imprime as estatísticas da tarefa
-  printf("Task %d exit: execution time %6d ms, processor time %6d ms, %d activations\n",
+  printf("Task %d exit: running time %6d ms, cpu time %6d ms, %d activations\n",
          current_task->id, current_task->execution_time, current_task->processor_time,
          current_task->activations);
 

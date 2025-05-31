@@ -35,6 +35,9 @@ typedef struct task_t
 
   // Campo para sincronização
   struct task_t *waiting_queue; // Fila de tarefas esperando por esta tarefa
+
+  // Campo para task_sleep
+  unsigned int wake_time; // Momento em que a tarefa deve acordar (em ms)
 } task_t;
 
 // Estruturas para sincronização (vazias por enquanto)
