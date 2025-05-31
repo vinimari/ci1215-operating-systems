@@ -146,28 +146,43 @@ void check_sleeping_tasks()
     return;
 
   unsigned int current_time = systime();
-  task_t *current = (task_t *)sleeping_queue;
-  task_t *first = current;
-  task_t *next;
 
-  // Percorre a fila de tarefas adormecidas
+  // Ponteiro para percorrer a fila, inicializado apontando para o início da fila
+  task_t *current = sleeping_queue;
+
+  // Guarda a referência do primeiro elemento da fila
+  task_t *first = current;
+
+  // Ponteiro auxiliar que será usado para marcar tarefas que devem ser acordadas
+  task_t *to_awake = NULL;
+
   do
   {
-    next = current->next;
-
-    // Se chegou a hora de acordar esta tarefa
+    // Verifica se a tarefa deve acordar
     if (current_time >= current->wake_time)
     {
-      // Acorda a tarefa (remove da fila de sleep e coloca na fila de prontas)
-      task_awake(current, &sleeping_queue);
+      to_awake = current;
+      current = current->next;
+
+      // Remove da fila de sleeping
+      queue_remove((queue_t **)&sleeping_queue, (queue_t *)to_awake);
+
+      // Coloca na fila de prontos
+      to_awake->status = TASK_READY;
+      queue_append((queue_t **)&ready_queue, (queue_t *)to_awake);
+
+      // Se a fila ficou vazia, sai do loop
+      if (sleeping_queue == NULL)
+        break;
+
+      // Reinicia a verificação desde o início da fila
+      current = sleeping_queue;
+      first = current;
     }
-
-    current = next;
-
-    // Se a fila ficou vazia, para o loop
-    if (sleeping_queue == NULL)
-      break;
-
+    else
+    {
+      current = current->next;
+    }
   } while (current != first && sleeping_queue != NULL);
 }
 
